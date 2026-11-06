@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>歯車シミュレータ君</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .gear-palette-item {
+      cursor: grab;
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+    .gear-palette-item:active {
+      cursor: grabbing;
+      transform: scale(1.05);
+    }
+    .drop-target-active {
+      background-color: rgba(59, 130, 246, 0.12) !important;
+      border-color: #3b82f6 !important;
+    }
+    /* スクロールバー非表示 */
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+    /* 側面歯車の縦すじ（歯）のデザイン */
+    .gear-block-stripe {
+      background-image: repeating-linear-gradient(
+        90deg,
+        rgba(255, 255, 255, 0.25),
+        rgba(255, 255, 255, 0.25) 3px,
+        transparent 3px,
+        transparent 7px
+      );
+    }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-800 h-screen overflow-hidden flex flex-col p-3">
+
+
+  <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;flex-shrink:0;padding:4px 8px">
+    <strong>歯車シミュレータ君</strong>
+    <button type="button" id="openAbout" style="padding:8px;cursor:pointer">利用条件・ライセンス</button>
+  </div>
+  <dialog id="aboutDialog" aria-labelledby="aboutTitle" style="max-width:640px;width:90%;max-height:80vh;overflow:auto;padding:24px;border:1px solid #cbd5e1;border-radius:16px;user-select:text">
+    <h2 id="aboutTitle">歯車シミュレータ君について</h2>
+    <p>© 2026 タカクラケンタロウ</p>
+    <h3>利用条件・免責事項</h3>
+    <pre style="white-space:pre-wrap;font:inherit">Copyright (c) 2026 Takakura Kentaro
+All rights reserved except as expressly permitted below.
+
+本ソフトウェアの著作権は、著作者に帰属します。
+以下の条件を満たす場合、本ソフトウェアの使用、複製、改変および再配布を無償で許可します。
+
+1. 著作者表示
+再配布・改変版の公開時には、原著作者名、出典URLおよび本ライセンスを明示してください。
+
+2. 非商用利用
+本ソフトウェア自体の販売、商用製品への組み込み、その他の営利目的での利用は禁止します。
+ただし、学校教育、有料・無料の講習会、研修会で教材として利用することは認めます。
+
+3. 改変・再配布
+改変および再配布を認めます。改変した場合は、その旨を明示してください。
+
+4. 免責事項
+本ソフトウェアは現状有姿で提供されます。著作者は、使用によって生じた損害について、法令で認められる範囲で責任を負いません。
+
+出典URL: https://github.com/ken-tak-steam/haguruma-sim
+
+</pre>
+    <h3>第三者ライブラリと通信</h3>
+    <p>画面表示に Tailwind CSS（MIT License）を使用しています。起動時に cdn.tailwindcss.com から取得するためインターネット接続が必要です。通信時にはIPアドレス等が配信事業者へ伝わる場合があります。シミュレーションの設定や結果を送信する処理はありません。</p>
+    <p><a href="https://github.com/tailwindlabs/tailwindcss/blob/v3.4.17/LICENSE" target="_blank" rel="noopener noreferrer">Tailwind CSS のライセンス</a>（本アプリの独自ライセンスとは別です）</p>
+    <p>学習用の簡易モデルです。実際の機械設計の安全性や全環境での動作を保証するものではありません。</p>
+    <form method="dialog"><button style="padding:12px 24px">閉じる</button></form>
+  </dialog>
+
+  <!-- エラー・警告通知トースト -->
+  <div id="toastNotification" class="fixed top-16 left-1/2 -translate-x-1/2 z-50 pointer-events-none opacity-0 transition-all duration-300 transform -translate-y-2">
+    <div class="bg-red-600 text-white px-5 py-2.5 rounded-2xl shadow-xl flex items-center gap-2 font-bold text-xs border border-red-400">
+      <svg class="w-4 h-4 fill-current shrink-0" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+      <span id="toastMessage">歯車が隣の軸と干渉するため配置できません</span>
+    </div>
+  </div>
+
+  <!-- ヘッダー / コントロールバー -->
+  <header class="bg-white rounded-2xl shadow-sm border border-slate-200 p-3 mb-3 flex items-center justify-between shrink-0">
+    <!-- 歯車パレット -->
+    <div class="flex items-center gap-4">
+      <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">歯車パレット</span>
+      <div class="flex items-center gap-3">
+        <!-- 赤: 20 -->
+        <div draggable="true" data-teeth="20" class="gear-palette-item flex items-center gap-2 bg-red-50 hover:bg-red-100 border border-red-200 px-3 py-1.5 rounded-xl shadow-xs">
+          <div class="w-6 h-6 rounded-full bg-red-500 flex items-center justify-center text-white text-xs font-black shadow-xs">20</div>
+          <span class="text-xs font-bold text-red-600">Z = 20</span>
+        </div>
+        <!-- 青: 40 -->
+        <div draggable="true" data-teeth="40" class="gear-palette-item flex items-center gap-2 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-3 py-1.5 rounded-xl shadow-xs">
+          <div class="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-white text-xs font-black shadow-xs">40</div>
+          <span class="text-xs font-bold text-blue-600">Z = 40</span>
+        </div>
+        <!-- 黄: 60 -->
+        <div draggable="true" data-teeth="60" class="gear-palette-item flex items-center gap-2 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-3 py-1.5 rounded-xl shadow-xs">
+          <div class="w-10 h-10 rounded-full bg-amber-500 flex items-center justify-center text-white text-xs font-black shadow-xs">60</div>
+          <span class="text-xs font-bold text-amber-600">Z = 60</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 再生・モータースピード・リセット -->
+    <div class="flex items-center gap-3">
+      <!-- モーターRPMスライダー -->
+      <div class="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
+        <span class="text-xs font-bold text-slate-500">M</span>
+        <input id="rpmSlider" type="range" min="10" max="180" value="60" class="w-24 accent-slate-700 cursor-pointer">
+        <span id="rpmValue" class="text-xs font-mono font-bold text-slate-700 w-12 text-right">60 RPM</span>
+      </div>
+
+      <!-- 再生/停止 -->
+      <button id="btnPlay" class="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-sm active:scale-95">
+        <svg id="playIcon" class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+        <span id="playText">スタート</span>
+      </button>
+
+      <!-- 回転数表示トグル -->
+      <button id="btnToggleRotations" class="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded-xl text-xs font-bold transition-all active:scale-95" title="回転数カウント表示の切り替え">
+        <svg class="w-4 h-4 stroke-current fill-none stroke-2" viewBox="0 0 24 24"><path d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14"/></svg>
+        <span id="rotationsText">回転数: OFF</span>
+      </button>
+
+      <!-- 角度リセット（位置リセット） -->
+      <button id="btnResetAngle" class="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded-xl text-xs font-bold transition-all active:scale-95" title="歯車の位置を開始点に戻す">
+        <svg class="w-4 h-4 stroke-current fill-none stroke-2" viewBox="0 0 24 24"><path d="M4 4v5h5M4 9a9 9 0 0115.36-5.36L20 4"/></svg>
+        <span>位置リセット</span>
+      </button>
+
+      <!-- 全クリア -->
+      <button id="btnReset" class="p-2 text-slate-400 hover:text-red-500 hover:bg-slate-100 rounded-xl transition-colors" title="全クリア">
+        <svg class="w-5 h-5 stroke-current fill-none stroke-2" viewBox="0 0 24 24"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- メインコンテンツ (側面構造図 & 正面回転図) -->
+  <main class="flex-1 grid grid-cols-2 gap-3 min-h-0">
+    
+    <!-- 左画面：側面構造図 (ドラッグ＆ドロップ対応) -->
+    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col overflow-hidden relative">
+      <div class="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+        <span class="text-xs font-bold text-slate-500">側面構造図（ドラッグ＆ドロップで配置）</span>
+        <span class="text-[10px] text-slate-400">※ 歯車タップで削除</span>
+      </div>
+      
+      <!-- 構造キャンバスエリア -->
+      <div id="sideViewContainer" class="flex-1 relative overflow-x-auto no-scrollbar flex items-center justify-start p-6 min-w-full">
+        <!-- JSで動的に軸と歯車をレンダリング -->
+        <div id="shaftsLayout" class="flex items-end h-full gap-2 relative"></div>
+      </div>
+    </section>
+
+    <!-- 右画面：正面回転図 -->
+    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col overflow-hidden relative">
+      <div class="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+        <span class="text-xs font-bold text-slate-500">正面回転図</span>
+        <span id="outputSpeedBadge" class="text-xs font-mono font-bold bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md">回転停止中</span>
+      </div>
+      <div class="flex-1 relative bg-slate-50/30 flex items-center justify-center p-2">
+        <canvas id="frontCanvas" class="w-full h-full block"></canvas>
+      </div>
+    </section>
+  </main>
+
+  <!-- フッター：ブラインド計算式 -->
+  <footer class="mt-3 bg-white rounded-2xl shadow-sm border border-slate-200 p-3 shrink-0">
+    <div id="formulaCard" class="cursor-pointer group relative overflow-hidden rounded-xl border border-slate-200 bg-slate-50 p-3 transition-all hover:border-slate-300">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="text-xs font-bold text-slate-500">速度伝達比（計算式）</span>
+          <span id="formulaBlindHint" class="text-[10px] bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full font-bold group-hover:bg-slate-300 transition-colors">タップで表示</span>
+        </div>
+        <div id="ratioSummary" class="text-sm font-mono font-black text-slate-800"></div>
+      </div>
+      
+      <!-- ブラインド表示エリア -->
+      <div id="formulaContent" class="mt-2 hidden text-xs font-mono text-slate-700 pt-2 border-t border-slate-200/60 leading-relaxed">
+        <!-- Dynamic Formula Text -->
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    document.getElementById('openAbout').addEventListener('click', () => document.getElementById('aboutDialog').showModal());
+    // --- 歯車定義 ---
+    const SCALE = 2.0; // 歯数1あたりの半径px（比例倍率）
+
+    const GEAR_SPECS = {
+      20: { teeth: 20, radius: 20 * SCALE, color: '#ef4444', border: '#b91c1c' }, // 赤
+      40: { teeth: 40, radius: 40 * SCALE, color: '#3b82f6', border: '#1d4ed8' }, // 青
+      60: { teeth: 60, radius: 60 * SCALE, color: '#eab308', border: '#a16207' }  // 黄
+    };
+
+    // --- 状態管理 ---
+    let state = {
+      isSimulating: false,
+      motorRPM: 60,
+      showFormula: false,
+      showRotations: false,
+      // 初期状態：第1軸のみ、歯車なし
+      shafts: [
+        { id: 1, layers: { A: null, B: null }, angle: 0, totalAngle: 0, rpm: 0, dir: 1 }
+      ]
+    };
+
+    let draggedTeeth = null;
+    let lastTime = 0;
+    let toastTimeout = null;
+
+    // DOM要素
+    const shaftsLayout = document.getElementById('shaftsLayout');
+    const frontCanvas = document.getElementById('frontCanvas');
+    const ctx = frontCanvas.getContext('2d');
+    const btnPlay = document.getElementById('btnPlay');
+    const playIcon = document.getElementById('playIcon');
+    const playText = document.getElementById('playText');
+    const btnToggleRotations = document.getElementById('btnToggleRotations');
+    const rotationsText = document.getElementById('rotationsText');
+    const btnResetAngle = document.getElementById('btnResetAngle');
+    const btnReset = document.getElementById('btnReset');
+    const rpmSlider = document.getElementById('rpmSlider');
+    const rpmValue = document.getElementById('rpmValue');
+    const formulaCard = document.getElementById('formulaCard');
+    const formulaContent = document.getElementById('formulaContent');
+    const formulaBlindHint = document.getElementById('formulaBlindHint');
+    const ratioSummary = document.getElementById('ratioSummary');
+    const outputSpeedBadge = document.getElementById('outputSpeedBadge');
+    const toastNotification = document.getElementById('toastNotification');
+    const toastMessage = document.getElementById('toastMessage');
+
+    // トースト通知を表示
+    function showToast(msg) {
+      toastMessage.textContent = msg;
+      toastNotification.classList.remove('opacity-0', '-translate-y-2', 'pointer-events-none');
+      toastNotification.classList.add('opacity-100', 'translate-y-0');
+
+      if (toastTimeout) clearTimeout(toastTimeout);
+      toastTimeout = setTimeout(() => {
+        toastNotification.classList.remove('opacity-100', 'translate-y-0');
+        toastNotification.classList.add('opacity-0', '-translate-y-2', 'pointer-events-none');
+      }, 2500);
+    }
+
+    // --- 軸のX座標精密計算（第n軸の上段と第n+1軸の下段の噛み合い構造） ---
+    function getShaftPositions(shaftList = state.shafts) {
+      const positions = [];
+      let currentX = 100; // 第1軸の初期X位置
+
+      shaftList.forEach((shaft, index) => {
+        if (index > 0) {
+          const prev = shaftList[index - 1];
+          // 第 (index-1) 軸の上段 (B) と 第 index 軸の下段 (A) が同じ高さで噛み合う
+          const zPrevUpper = prev.layers.B;
+          const zCurrLower = shaft.layers.A;
+
+          if (zPrevUpper > 0 && zCurrLower > 0) {
+            // 噛み合う距離（半径の和 - 2pxのオーバーラップ）
+            const dist = (zPrevUpper + zCurrLower) * SCALE - 3;
+            currentX += dist;
+          } else {
+            // 歯車がセットされていない場合のデフォルト軸間距離
+            currentX += 120;
+          }
+        }
+        positions.push(currentX);
+      });
+      return positions;
+    }
+
+    // --- 干渉チェック (物理衝突検証) ---
+    function checkInterference(targetShafts) {
+      const positions = getShaftPositions(targetShafts);
+
+      for (let i = 0; i < targetShafts.length; i++) {
+        const shaft = targetShafts[i];
+        const currentX = positions[i];
+
+        // 各層の歯車半径
+        const rA = shaft.layers.A ? GEAR_SPECS[shaft.layers.A].radius : 0;
+        const rB = shaft.layers.B ? GEAR_SPECS[shaft.layers.B].radius : 0;
+
+        // 1. 左軸との干渉チェック
+        if (i > 0) {
+          const leftX = positions[i - 1];
+          const distToLeft = currentX - leftX;
+
+          // 歯車の端が左軸の中心（軸の棒）に届く/超える場合は軸と干渉
+          if (rA >= distToLeft || rB >= distToLeft) {
+            return { hasError: true, message: '歯車が左の軸と干渉するため配置できません' };
+          }
+        }
+
+        // 2. 右軸との干渉チェック
+        if (i < targetShafts.length - 1) {
+          const rightX = positions[i + 1];
+          const distToRight = rightX - currentX;
+
+          // 歯車の端が右軸の中心（軸の棒）に届く/超える場合は軸と干渉
+          if (rA >= distToRight || rB >= distToRight) {
+            return { hasError: true, message: '歯車が右の軸と干渉するため配置できません' };
+          }
+        }
+      }
+
+      return { hasError: false };
+    }
+
+    // --- ドラッグ＆ドロップ初期化 ---
+    document.querySelectorAll('.gear-palette-item').forEach(item => {
+      item.addEventListener('dragstart', (e) => {
+        draggedTeeth = parseInt(item.getAttribute('data-teeth'));
+        e.dataTransfer.setData('text/plain', draggedTeeth);
+      });
+    });
+
+    // --- 物理・回転計算 ---
+    function updatePhysics() {
+      if (state.shafts.length === 0) return;
+
+      // 第1軸の初期設定
+      state.shafts[0].rpm = state.isSimulating ? state.motorRPM : 0;
+      state.shafts[0].dir = 1;
+
+      // 各軸の連動計算 (第 i-1 軸の上段 B から 第 i 軸の下段 A へ伝達)
+      for (let i = 1; i < state.shafts.length; i++) {
+        const prevShaft = state.shafts[i - 1];
+        const currShaft = state.shafts[i];
+
+        const zPrevUpper = prevShaft.layers.B;
+        const zCurrLower = currShaft.layers.A;
+
+        if (zPrevUpper > 0 && zCurrLower > 0 && prevShaft.rpm !== 0) {
+          const speedRatio = zPrevUpper / zCurrLower;
+          currShaft.rpm = prevShaft.rpm * speedRatio;
+          currShaft.dir = -prevShaft.dir;
+        } else {
+          currShaft.rpm = 0;
+          currShaft.dir = 1;
+        }
+      }
+
+      updateFormulaUI();
+    }
+
+    // --- 側面構造図（UI）描画 ---
+    function renderStructureUI() {
+      shaftsLayout.innerHTML = '';
+      const positions = getShaftPositions();
+      const lastX = positions.length > 0 ? positions[positions.length - 1] : 100;
+      
+      shaftsLayout.style.width = `${Math.max(600, lastX + 160)}px`;
+
+      const BASE_HEIGHT_STEP = 42; // 各噛み合い層（段）の高さステップ(px)
+
+      state.shafts.forEach((shaft, index) => {
+        const posX = positions[index];
+
+        const shaftEl = document.createElement('div');
+        shaftEl.className = 'absolute bottom-6 flex flex-col items-center justify-end h-96 group';
+        shaftEl.style.left = `${posX}px`;
+        shaftEl.style.transform = 'translateX(-50%)';
+
+        // 垂直軸（黒い太棒）
+        const rod = document.createElement('div');
+        rod.className = 'w-3.5 bg-slate-900 rounded-t-sm shadow-md absolute bottom-10 z-0';
+        rod.style.height = '310px';
+
+        // 軸ラベル
+        const label = document.createElement('div');
+        label.className = 'absolute -top-4 text-[11px] font-bold text-slate-600 bg-slate-200 px-2 py-0.5 rounded-full z-20 whitespace-nowrap';
+        label.textContent = `第${index + 1}軸`;
+
+        // 各軸の高さレベル計算：
+        // 第 index 軸の下段 (A) は Level = index
+        // 第 index 軸の上段 (B) は Level = index + 1
+        // これにより、第 index 軸の B と 第 (index+1) 軸の A が同じ Level (index + 1) となり同じ高さになる！
+        const levelA = index;
+        const levelB = index + 1;
+
+        const bottomA = 48 + levelA * BASE_HEIGHT_STEP;
+        const bottomB = 48 + levelB * BASE_HEIGHT_STEP;
+
+        // 下段スロット (A)
+        const slotA = createSlotElement(shaft.id, 'A', shaft.layers.A, bottomA);
+        // 上段スロット (B)
+        const slotB = createSlotElement(shaft.id, 'B', shaft.layers.B, bottomB);
+
+        shaftEl.appendChild(label);
+        shaftEl.appendChild(rod);
+        shaftEl.appendChild(slotA);
+        shaftEl.appendChild(slotB);
+
+        // 第1軸の下に「M」モーターマーク
+        if (index === 0) {
+          const motorBox = document.createElement('div');
+          motorBox.className = 'absolute -bottom-2 bg-slate-800 text-white rounded-lg w-12 h-10 flex items-center justify-center font-black text-sm shadow-md z-20 border-2 border-slate-700';
+          motorBox.textContent = 'M';
+          shaftEl.appendChild(motorBox);
+        }
+
+        // 軸の削除ボタン（第1軸以外）
+        if (index > 0) {
+          const btnDelShaft = document.createElement('button');
+          btnDelShaft.className = 'absolute -bottom-8 opacity-0 group-hover:opacity-100 text-red-500 hover:text-red-700 text-xs font-bold transition-opacity whitespace-nowrap';
+          btnDelShaft.textContent = '軸削除';
+          btnDelShaft.onclick = () => removeShaft(shaft.id);
+          shaftEl.appendChild(btnDelShaft);
+        }
+
+        shaftsLayout.appendChild(shaftEl);
+      });
+
+      // 新しい軸を追加するドロップゾーン
+      const addZone = document.createElement('div');
+      addZone.className = 'absolute bottom-16 h-64 w-24 border-2 border-dashed border-slate-300 rounded-2xl flex flex-col items-center justify-center text-slate-400 text-xs font-bold transition-colors';
+      addZone.style.left = `${lastX + 110}px`;
+      addZone.style.transform = 'translateX(-50%)';
+      addZone.innerHTML = `<span>+ 新しい軸</span>`;
+      
+      addZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        addZone.classList.add('drop-target-active');
+      });
+      addZone.addEventListener('dragleave', () => {
+        addZone.classList.remove('drop-target-active');
+      });
+      addZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        addZone.classList.remove('drop-target-active');
+        if (draggedTeeth) {
+          addNewShaftWithGear(draggedTeeth);
+        }
+      });
+
+      shaftsLayout.appendChild(addZone);
+    }
+
+    // スロット（歯車設置場所）作成
+    function createSlotElement(shaftId, layer, teeth, bottomPx) {
+      const slot = document.createElement('div');
+      slot.className = 'absolute z-10 flex items-center justify-center rounded-lg border-2 border-dashed border-transparent transition-all h-9 min-w-[60px]';
+      slot.style.bottom = `${bottomPx}px`;
+
+      if (teeth) {
+        const spec = GEAR_SPECS[teeth];
+        const gearWidth = spec.radius * 2;
+
+        const gearBar = document.createElement('div');
+        gearBar.className = 'h-9 rounded-sm flex items-center justify-center font-black text-white shadow-sm cursor-pointer hover:brightness-105 transition-all gear-block-stripe border-y-2';
+        gearBar.style.backgroundColor = spec.color;
+        gearBar.style.borderColor = spec.border;
+        gearBar.style.width = `${gearWidth}px`;
+        gearBar.textContent = teeth;
+        gearBar.title = 'タップで取り外し';
+        gearBar.onclick = () => removeGear(shaftId, layer);
+        slot.appendChild(gearBar);
+      } else {
+        slot.className += ' border-slate-300 hover:border-slate-400 bg-slate-50/50 w-24';
+      }
+
+      // ドラッグ＆ドロップイベント
+      slot.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        slot.classList.add('drop-target-active');
+      });
+      slot.addEventListener('dragleave', () => {
+        slot.classList.remove('drop-target-active');
+      });
+      slot.addEventListener('drop', (e) => {
+        e.preventDefault();
+        slot.classList.remove('drop-target-active');
+        if (draggedTeeth) {
+          setGear(shaftId, layer, draggedTeeth);
+        }
+      });
+
+      return slot;
+    }
+
+    // --- 歯車のセットと削除（干渉判定付き） ---
+    function setGear(shaftId, layer, teeth) {
+      // 仮想の shafts 状態で事前に干渉チェックを行う
+      const testShafts = JSON.parse(JSON.stringify(state.shafts));
+      const targetShaft = testShafts.find(s => s.id === shaftId);
+
+      if (targetShaft) {
+        targetShaft.layers[layer] = teeth;
+
+        // 干渉判定
+        const result = checkInterference(testShafts);
+        if (result.hasError) {
+          showToast(`⚠️ ${result.message}`);
+          return; // 配置拒否
+        }
+
+        // 干渉がなければ本番状態に反映
+        const realShaft = state.shafts.find(s => s.id === shaftId);
+        if (realShaft) {
+          realShaft.layers[layer] = teeth;
+          updatePhysics();
+          renderStructureUI();
+        }
+      }
+    }
+
+    function removeGear(shaftId, layer) {
+      const shaft = state.shafts.find(s => s.id === shaftId);
+      if (shaft) {
+        shaft.layers[layer] = null;
+        updatePhysics();
+        renderStructureUI();
+      }
+    }
+
+    function addNewShaftWithGear(teeth) {
+      const newId = Date.now();
+      const testShafts = JSON.parse(JSON.stringify(state.shafts));
+      testShafts.push({
+        id: newId,
+        layers: { A: teeth, B: null },
+        angle: 0,
+        totalAngle: 0,
+        rpm: 0,
+        dir: 1
+      });
+
+      // 干渉判定
+      const result = checkInterference(testShafts);
+      if (result.hasError) {
+        showToast(`⚠️ ${result.message}`);
+        return;
+      }
+
+      state.shafts.push({
+        id: newId,
+        layers: { A: teeth, B: null },
+        angle: 0,
+        totalAngle: 0,
+        rpm: 0,
+        dir: 1
+      });
+      updatePhysics();
+      renderStructureUI();
+    }
+
+    function removeShaft(shaftId) {
+      state.shafts = state.shafts.filter(s => s.id !== shaftId);
+      updatePhysics();
+      renderStructureUI();
+    }
+
+    // --- 正面図 (Canvas 描画) ---
+    function resizeCanvas() {
+      const rect = frontCanvas.parentElement.getBoundingClientRect();
+      frontCanvas.width = rect.width;
+      frontCanvas.height = rect.height;
+    }
+
+    function renderFrontView() {
+      ctx.clearRect(0, 0, frontCanvas.width, frontCanvas.height);
+
+      if (state.shafts.length === 0) return;
+
+      const centerY = frontCanvas.height / 2;
+      const positions = getShaftPositions();
+
+      // 各軸と歯車の描き込み
+      state.shafts.forEach((shaft, index) => {
+        const x = positions[index];
+
+        // 軸の中心線
+        ctx.strokeStyle = '#cbd5e1';
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(x, 30);
+        ctx.lineTo(x, frontCanvas.height - 30);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // 回転数のカウント表示（有効時）
+        if (state.showRotations) {
+          const rotations = Math.floor(Math.abs((shaft.totalAngle || 0) / (2 * Math.PI)));
+          const badgeW = 64;
+          const badgeH = 40;
+          const badgeX = x - badgeW / 2;
+          const badgeY = 16;
+
+          ctx.save();
+          if (ctx.roundRect) {
+            ctx.fillStyle = '#0f172a';
+            ctx.beginPath();
+            ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 12);
+            ctx.fill();
+          } else {
+            ctx.fillStyle = '#0f172a';
+            ctx.fillRect(badgeX, badgeY, badgeW, badgeH);
+          }
+
+          ctx.fillStyle = '#38bdf8';
+          ctx.font = 'bold 28px system-ui, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(`${rotations}`, x, badgeY + badgeH / 2, badgeW - 12);
+          ctx.restore();
+        }
+
+        // 下段 (Layer A) -> 上段 (Layer B) の順で重なり描画
+        ['A', 'B'].forEach(layer => {
+          const teeth = shaft.layers[layer];
+          if (teeth) {
+            const spec = GEAR_SPECS[teeth];
+            drawGearCircle(ctx, x, centerY, spec.radius, teeth, shaft.angle, spec.color, spec.border, layer === 'B');
+          }
+        });
+
+        // 軸中心点
+        ctx.fillStyle = '#0f172a';
+        ctx.beginPath();
+        ctx.arc(x, centerY, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(x, centerY, 2, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    }
+
+    // 正面歯車を描画するヘルパー
+    function drawGearCircle(ctx, cx, cy, r, teeth, angle, fillColor, strokeColor, isUpper) {
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(angle);
+
+      // 歯車の本体円
+      ctx.fillStyle = fillColor;
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = 2;
+      ctx.globalAlpha = isUpper ? 0.95 : 0.8;
+
+      ctx.beginPath();
+      const numTeeth = teeth;
+      for (let i = 0; i < numTeeth; i++) {
+        const a1 = (i / numTeeth) * Math.PI * 2;
+        const a2 = ((i + 0.4) / numTeeth) * Math.PI * 2;
+        const a3 = ((i + 0.7) / numTeeth) * Math.PI * 2;
+        const outerR = r + 3;
+        const innerR = r - 3;
+
+        if (i === 0) ctx.moveTo(Math.cos(a1) * innerR, Math.sin(a1) * innerR);
+        ctx.lineTo(Math.cos(a1) * outerR, Math.sin(a1) * outerR);
+        ctx.lineTo(Math.cos(a2) * outerR, Math.sin(a2) * outerR);
+        ctx.lineTo(Math.cos(a3) * innerR, Math.sin(a3) * innerR);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      // 回転基準印 (目印の白いドット & ライン)
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(r - 5, 0);
+      ctx.stroke();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(r - 7, 0, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 歯数文字
+      ctx.rotate(-angle);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '900 12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.shadowColor = 'rgba(0,0,0,0.5)';
+      ctx.shadowBlur = 3;
+      ctx.fillText(teeth, 0, isUpper ? -10 : 10);
+
+      ctx.restore();
+    }
+
+    // --- 計算式 UI アップデート ---
+    function updateFormulaUI() {
+      const steps = [];
+      let totalRatio = 1;
+      let isChainBroken = false;
+
+      for (let i = 0; i < state.shafts.length - 1; i++) {
+        const s1 = state.shafts[i];
+        const s2 = state.shafts[i + 1];
+
+        // 第 i 軸の上段 (B) と 第 i+1 軸の下段 (A) の噛み合い
+        const z1 = s1.layers.B;
+        const z2 = s2.layers.A;
+
+        if (z1 > 0 && z2 > 0) {
+          const stepRatio = z1 / z2;
+          totalRatio *= stepRatio;
+          steps.push(`(${z1} / ${z2})`);
+        } else {
+          isChainBroken = true;
+          break;
+        }
+      }
+
+      const lastShaft = state.shafts[state.shafts.length - 1];
+      const outputRPM = lastShaft ? lastShaft.rpm : 0;
+
+      if (steps.length === 0 || isChainBroken) {
+        ratioSummary.textContent = '伝達なし';
+        formulaContent.innerHTML = '第1軸の上段と第2軸の下段（および第2軸の上段と第3軸の下段）に歯車を設置してください。';
+        outputSpeedBadge.textContent = '回転停止中';
+      } else {
+        const ratioStr = totalRatio.toFixed(3).replace(/\.?0+$/, '');
+        ratioSummary.textContent = `伝達比: 1 : ${ratioStr}`;
+        outputSpeedBadge.textContent = `最終軸: ${Math.abs(outputRPM).toFixed(1)} RPM`;
+
+        formulaContent.innerHTML = `
+          <div class="flex items-center gap-2 flex-wrap">
+            <span>計算式:</span>
+            <span class="font-bold text-blue-600">${steps.join(' × ')}</span>
+            <span>=</span>
+            <span class="font-bold text-slate-900">${ratioStr}</span>
+          </div>
+          <div class="mt-1 text-slate-500">
+            原動軸 (${state.motorRPM} RPM) × 伝達比 (${ratioStr}) = 最終軸速度 (${Math.abs(outputRPM).toFixed(1)} RPM)
+          </div>
+        `;
+      }
+    }
+
+    // --- アニメーションループ ---
+    function animate(timestamp) {
+      if (!lastTime) lastTime = timestamp;
+      const dt = (timestamp - lastTime) / 1000;
+      lastTime = timestamp;
+
+      if (state.isSimulating) {
+        state.shafts.forEach(shaft => {
+          if (shaft.rpm !== 0) {
+            // RPMからラジアン/秒への変換
+            const rps = (shaft.rpm / 60) * Math.PI * 2;
+            const deltaAngle = rps * shaft.dir * dt;
+            shaft.angle += deltaAngle;
+            shaft.totalAngle = (shaft.totalAngle || 0) + deltaAngle;
+          }
+        });
+      }
+
+      renderFrontView();
+      requestAnimationFrame(animate);
+    }
+    btnPlay.addEventListener('click', () => {
+      state.isSimulating = !state.isSimulating;
+      btnPlay.classList.toggle('bg-red-600', state.isSimulating);
+      btnPlay.classList.toggle('bg-slate-900', !state.isSimulating);
+      playText.textContent = state.isSimulating ? 'ストップ' : 'スタート';
+      playIcon.innerHTML = state.isSimulating ? '<path d="M6 5h4v14H6zm8 0h4v14h-4z"/>' : '<path d="M8 5v14l11-7z"/>';
+      updatePhysics();
+    });
+    // 位置リセット：全ての歯車の回転角度と回転数を0に初期化
+    btnResetAngle.addEventListener('click', () => {
+      state.shafts.forEach(shaft => {
+        shaft.angle = 0;
+        shaft.totalAngle = 0;
+      });
+      renderFrontView();
+    });
+
+    btnReset.addEventListener('click', () => {
+      state.isSimulating = false;
+      btnPlay.classList.replace('bg-red-600', 'bg-slate-900');
+      playText.textContent = 'スタート';
+      playIcon.innerHTML = `<path d="M8 5v14l11-7z"/>`;
+      
+      // 初期状態：第1軸のみ（歯車なし）
+      state.shafts = [
+        { id: 1, layers: { A: null, B: null }, angle: 0, totalAngle: 0, rpm: 0, dir: 1 }
+      ];
+      updatePhysics();
+      renderStructureUI();
+    });
+
+    // 回転数カウント表示のトグル切り替え
+    btnToggleRotations.addEventListener('click', () => {
+      state.showRotations = !state.showRotations;
+      if (state.showRotations) {
+        rotationsText.textContent = '回転数: ON';
+        btnToggleRotations.classList.replace('bg-slate-100', 'bg-blue-600');
+        btnToggleRotations.classList.replace('text-slate-700', 'text-white');
+        btnToggleRotations.classList.replace('hover:bg-slate-200', 'hover:bg-blue-700');
+      } else {
+        rotationsText.textContent = '回転数: OFF';
+        btnToggleRotations.classList.replace('bg-blue-600', 'bg-slate-100');
+        btnToggleRotations.classList.replace('text-white', 'text-slate-700');
+        btnToggleRotations.classList.replace('hover:bg-blue-700', 'hover:bg-slate-200');
+      }
+      renderFrontView();
+    });
+
+    rpmSlider.addEventListener('input', (e) => {
+      state.motorRPM = parseInt(e.target.value);
+      rpmValue.textContent = `${state.motorRPM} RPM`;
+      updatePhysics();
+    });
+
+    formulaCard.addEventListener('click', () => {
+      state.showFormula = !state.showFormula;
+      if (state.showFormula) {
+        formulaContent.classList.remove('hidden');
+        formulaBlindHint.textContent = '非表示';
+      } else {
+        formulaContent.classList.add('hidden');
+        formulaBlindHint.textContent = 'タップで表示';
+      }
+    });
+
+    window.addEventListener('resize', () => {
+      resizeCanvas();
+      renderFrontView();
+    });
+
+    // 初期起動
+    window.onload = () => {
+      resizeCanvas();
+      updatePhysics();
+      renderStructureUI();
+      requestAnimationFrame(animate);
+    };
+  </script>
+</body>
+</html>
